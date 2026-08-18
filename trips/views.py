@@ -6,8 +6,8 @@ from rest_framework.views import APIView
 
 from services.hos_engine.dataclasses import RouteLeg
 from services.hos_engine.engine import plan_trip
-from services.routing.client import OpenRouteServiceClient
-from services.routing.exceptions import RoutingError
+from services.open_routing.client import OpenRouteServiceClient, get_client
+from services.open_routing.exceptions import RoutingError
 from trips.models import Trip
 from trips.persistence import save_trip
 from trips.serializers import (
@@ -32,7 +32,7 @@ class GeocodeAutocompleteView(APIView):
             return Response([])
 
         try:
-            suggestions = OpenRouteServiceClient().autocomplete(query)
+            suggestions = get_client().autocomplete(query)
         except RoutingError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
@@ -77,7 +77,7 @@ class TripViewSet(
         input_serializer.is_valid(raise_exception=True)
         data = input_serializer.validated_data
 
-        client = OpenRouteServiceClient()
+        client = get_client()
 
         try:
             route = client.get_route(

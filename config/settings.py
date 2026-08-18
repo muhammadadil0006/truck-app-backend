@@ -121,8 +121,8 @@ REST_FRAMEWORK = {
 }
 
 # Repeated identical geocode/directions lookups are cached here (see
-# services/routing/client.py) instead of reaching for Redis — this is a
-# single-process deployment with no need for a shared external cache.
+# services/open_routing/client.py) instead of reaching for Redis — this is
+# a single-process deployment with no need for a shared external cache.
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",

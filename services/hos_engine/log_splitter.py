@@ -25,26 +25,22 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from services.constants import (CYCLE_LIMIT_HOURS, MINUTES_PER_HOUR,
-                                RESTART_OFF_DUTY_HOURS, DutyStatus)
+from services.constants import CYCLE_LIMIT_HOURS, MINUTES_PER_HOUR, DutyStatus, RESTART_OFF_DUTY_HOURS
+from services.hos_engine.constants import SECONDS_PER_MINUTE
 from services.hos_engine.dataclasses import DailySummary, Segment, Transition
-
-SECONDS_PER_MINUTE = 60
-
-
-def _duration_minutes(segment: Segment) -> float:
-    start = datetime.fromisoformat(segment.start_time)
-    end = datetime.fromisoformat(segment.end_time)
-    return (end - start).total_seconds() / SECONDS_PER_MINUTE
+from services.hos_engine.helpers import duration_minutes
 
 
 def _split_at_midnight(segment: Segment) -> list[Segment]:
+    """Splits one segment into per-day pieces wherever it crosses midnight,
+    dividing `miles` proportionally by duration. A segment that doesn't
+    cross midnight is returned unchanged, as a single-item list."""
     start = datetime.fromisoformat(segment.start_time)
     end = datetime.fromisoformat(segment.end_time)
     if start.date() == end.date():
         return [segment]
 
-    total_minutes = _duration_minutes(segment)
+    total_minutes = duration_minutes(segment)
     pieces: list[Segment] = []
     cursor = start
     is_first_piece = True
@@ -113,6 +109,8 @@ def split_into_daily_summaries(
     segments: list[Segment],
     cycle_used_hours_at_start: float,
 ) -> list[DailySummary]:
+    """Groups a trip's full segment list into one DailySummary per calendar
+    day, each carrying that day's transitions and rolling recap numbers."""
     all_pieces: list[Segment] = []
     for seg in segments:
         all_pieces.extend(_split_at_midnight(seg))
@@ -132,24 +130,16 @@ def split_into_daily_summaries(
     for day_index, day_key in enumerate(sorted(days.keys()), start=1):
         day_segments = days[day_key]
 
-        driving_minutes = sum(
-            _duration_minutes(s) for s in day_segments if s.status == DutyStatus.DRIVING
-        )
-        on_duty_minutes = sum(
-            _duration_minutes(s) for s in day_segments if s.status == DutyStatus.ON_DUTY_NOT_DRIVING
-        )
-        off_duty_minutes = sum(
-            _duration_minutes(s) for s in day_segments if s.status == DutyStatus.OFF_DUTY
-        )
-        sleeper_minutes = sum(
-            _duration_minutes(s) for s in day_segments if s.status == DutyStatus.SLEEPER_BERTH
-        )
+        driving_minutes = sum(duration_minutes(s) for s in day_segments if s.status == DutyStatus.DRIVING)
+        on_duty_minutes = sum(duration_minutes(s) for s in day_segments if s.status == DutyStatus.ON_DUTY_NOT_DRIVING)
+        off_duty_minutes = sum(duration_minutes(s) for s in day_segments if s.status == DutyStatus.OFF_DUTY)
+        sleeper_minutes = sum(duration_minutes(s) for s in day_segments if s.status == DutyStatus.SLEEPER_BERTH)
         miles_today = sum(s.miles for s in day_segments)
 
         day_on_duty_hours = (driving_minutes + on_duty_minutes) / MINUTES_PER_HOUR
 
         had_restart_today = any(
-            s.status == DutyStatus.OFF_DUTY and _duration_minutes(s) / MINUTES_PER_HOUR >= RESTART_OFF_DUTY_HOURS
+            s.status == DutyStatus.OFF_DUTY and duration_minutes(s) / MINUTES_PER_HOUR >= RESTART_OFF_DUTY_HOURS
             for s in day_segments
         )
 

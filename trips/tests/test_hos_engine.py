@@ -19,7 +19,8 @@ from services.constants import (CYCLE_LIMIT_HOURS, CYCLE_LIMIT_MINUTES,
                                 MAX_DRIVING_HOURS_PER_DAY,
                                 MAX_DUTY_WINDOW_MINUTES, DutyStatus)
 from services.hos_engine.dataclasses import RouteLeg
-from services.hos_engine.engine import _Simulator, plan_trip
+from services.hos_engine.engine import plan_trip
+from services.hos_engine.simulator import _Simulator
 
 SHIFT_START = "2026-08-18T06:00:00"
 

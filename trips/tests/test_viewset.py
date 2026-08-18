@@ -85,7 +85,7 @@ class TripViewSetCreateTests(APITestCase):
         self.assertEqual(float(response.data["total_distance_miles"]), 35.0)
 
     def test_create_returns_502_on_routing_failure(self):
-        from services.routing.exceptions import RoutingError
+        from services.open_routing.exceptions import RoutingError
 
         with patch("trips.views.OpenRouteServiceClient.get_route", side_effect=RoutingError("boom")):
             response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD, **GUEST_A)

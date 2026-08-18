@@ -3,7 +3,7 @@ from unittest.mock import patch
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from services.routing.exceptions import RoutingError
+from services.open_routing.exceptions import RoutingError
 
 
 class GeocodeAutocompleteViewTests(APITestCase):

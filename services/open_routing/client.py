@@ -32,54 +32,23 @@ import requests
 from django.conf import settings
 from django.core.cache import cache
 
-from services.routing.exceptions import RoutingError
-
-AUTOCOMPLETE_CACHE_TTL_SECONDS = 60 * 60 * 24  # 24h — place names don't change
-REVERSE_GEOCODE_CACHE_TTL_SECONDS = 60 * 60 * 24
-AUTOCOMPLETE_RESULT_SIZE = 8
-REQUEST_TIMEOUT_SECONDS = 8
-
-METERS_PER_MILE = 1609.34
-SECONDS_PER_HOUR = 3600
-
-# ORS's driving-car profile hard-caps the total route distance it will
-# compute — see https://openrouteservice.org error code 2004. Surfaced here
-# so the 400 it returns becomes an actionable message instead of a bare
-# "400 Client Error: Bad Request".
-MAX_ROUTE_DISTANCE_METERS = 6_000_000
-MAX_ROUTE_DISTANCE_MILES = MAX_ROUTE_DISTANCE_METERS / METERS_PER_MILE
-
-# ORS error codes worth a specific, actionable message. Anything else falls
-# back to ORS's own `error.message` (still far more useful than the generic
-# HTTP status text).
-_ORS_ERROR_MESSAGES = {
-    2004: (
-        f"This trip's total route distance is too long for our free routing "
-        f"service (limit ~{MAX_ROUTE_DISTANCE_MILES:,.0f} miles). Try a shorter route."
-    ),
-    2010: "Couldn't find a road near one of the selected locations — try picking a nearby city or address instead.",
-}
-
-
-def _extract_ors_error_message(response: requests.Response) -> str:
-    """Pulls ORS's own {"error": {"code", "message"}} body out of a failed
-    response instead of settling for requests' generic HTTP status text."""
-    try:
-        error = response.json().get("error", {})
-        code = error.get("code")
-        if code in _ORS_ERROR_MESSAGES:
-            return _ORS_ERROR_MESSAGES[code]
-        if error.get("message"):
-            return error["message"]
-    except ValueError:
-        pass
-    return response.text[:300] or f"HTTP {response.status_code}"
+from services.open_routing.constants import (
+    AUTOCOMPLETE_CACHE_TTL_SECONDS,
+    AUTOCOMPLETE_RESULT_SIZE,
+    METERS_PER_MILE,
+    REQUEST_TIMEOUT_SECONDS,
+    REVERSE_GEOCODE_CACHE_TTL_SECONDS,
+    SECONDS_PER_HOUR,
+)
+from services.open_routing.exceptions import RoutingError
+from services.open_routing.helpers import extract_ors_error_message
 
 
 class OpenRouteServiceClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
         self.api_key = api_key or settings.ORS_API_KEY
         self.base_url = base_url or settings.ORS_BASE_URL
+        self._session = requests.Session()
 
     def autocomplete(self, text: str) -> list[dict]:
         """Return up to AUTOCOMPLETE_RESULT_SIZE place suggestions for the
@@ -95,7 +64,7 @@ class OpenRouteServiceClient:
             return cached
 
         try:
-            response = requests.get(
+            response = self._session.get(
                 f"{self.base_url}/geocode/autocomplete",
                 params={"api_key": self.api_key, "text": text, "size": AUTOCOMPLETE_RESULT_SIZE},
                 timeout=REQUEST_TIMEOUT_SECONDS,
@@ -103,7 +72,9 @@ class OpenRouteServiceClient:
             response.raise_for_status()
             body = response.json()
         except requests.HTTPError as exc:
-            raise RoutingError(f"OpenRouteService autocomplete failed: {_extract_ors_error_message(exc.response)}") from exc
+            raise RoutingError(
+                f"OpenRouteService autocomplete failed: {extract_ors_error_message(exc.response)}"
+            ) from exc
         except (requests.RequestException, ValueError) as exc:
             raise RoutingError(f"OpenRouteService autocomplete failed: {exc}") from exc
 
@@ -130,7 +101,7 @@ class OpenRouteServiceClient:
             return cached
 
         try:
-            response = requests.get(
+            response = self._session.get(
                 f"{self.base_url}/geocode/reverse",
                 params={"api_key": self.api_key, "point.lat": lat, "point.lon": lng, "size": 1},
                 timeout=REQUEST_TIMEOUT_SECONDS,
@@ -158,10 +129,10 @@ class OpenRouteServiceClient:
 
         Raises RoutingError on non-2xx response, timeout, or malformed body.
         """
-        coordinates = [[lng, lat] for lat, lng in waypoints]  # ORS wants [lng, lat]
+        coordinates = [[lng, lat] for lat, lng in waypoints]
 
         try:
-            response = requests.post(
+            response = self._session.post(
                 f"{self.base_url}/v2/directions/driving-car/geojson",
                 headers={"Authorization": self.api_key, "Content-Type": "application/json"},
                 json={"coordinates": coordinates},
@@ -174,7 +145,7 @@ class OpenRouteServiceClient:
             summary = feature["properties"]["summary"]
             geometry = feature["geometry"]["coordinates"]
         except requests.HTTPError as exc:
-            raise RoutingError(_extract_ors_error_message(exc.response)) from exc
+            raise RoutingError(extract_ors_error_message(exc.response)) from exc
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
             raise RoutingError(f"OpenRouteService directions failed: {exc}") from exc
 
@@ -190,3 +161,32 @@ class OpenRouteServiceClient:
                 for seg in segments
             ],
         }
+
+
+_singleton: OpenRouteServiceClient | None = None
+
+
+def get_client() -> OpenRouteServiceClient:
+    """Returns one shared, settings-configured OpenRouteServiceClient per
+    worker process, created lazily on first use.
+
+    A singleton is worth it here specifically because the client now holds
+    a requests.Session — reusing it across requests keeps the underlying
+    TCP/TLS connection to ORS warm instead of renegotiating one on every
+    call. It would NOT have been worth it while the client was stateless
+    (plain module-level requests.get/post calls) — there'd have been
+    nothing to actually share.
+
+    Not implemented as a classic __new__-override singleton, because tests
+    (and anything else needing a specific api_key/base_url, e.g. against a
+    fake host) still need to construct isolated instances directly via
+    OpenRouteServiceClient(...) — a singleton that silently ignored those
+    constructor args would break that. This factory is the version of
+    "shared instance" that coexists with that need: call get_client() for
+    the shared, settings-backed default; construct the class directly for
+    anything else.
+    """
+    global _singleton
+    if _singleton is None:
+        _singleton = OpenRouteServiceClient()
+    return _singleton
