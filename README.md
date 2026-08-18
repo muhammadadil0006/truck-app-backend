@@ -44,13 +44,14 @@ python -c "from django.core.management.utils import get_random_secret_key; print
 
 ## Environment Variables
 
-| Variable | Local default | Production (Render) |
+| Variable | Local default | Production (Vercel) |
 |---|---|---|
 | `SECRET_KEY` | any string | real generated secret, kept out of git |
 | `DEBUG` | `True` | `False` |
-| `ALLOWED_HOSTS` | `localhost,127.0.0.1` | your Render domain |
-| `DATABASE_URL` | `sqlite:///db.sqlite3` | Render's managed Postgres URL (auto-injected) |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:3000` | your deployed Vercel URL(s) |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1` | your `*.vercel.app` domain (+ custom domain if any) |
+| `CSRF_TRUSTED_ORIGINS` | unset | `https://your-backend.vercel.app` |
+| `DATABASE_URL` | `sqlite:///db.sqlite3` | Supabase Transaction pooler URL (port 6543) |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:3000` | your deployed frontend URL(s) |
 | `ORS_API_KEY` | your free ORS key | same |
 | `ORS_BASE_URL` | `https://api.openrouteservice.org` | same |
 
@@ -98,33 +99,58 @@ guaranteed to be the point the route is computed from.
 
 Full request/response shapes in [`../PLANNING.md`](../PLANNING.md) § API Contract.
 
-## Deploying to Render
+## Database: Supabase Postgres
 
-1. Push this repo to GitHub (already connected — see project notes).
-2. In the Render dashboard: **New → Web Service**, connect the repo, set
+1. Sign up free at https://supabase.com, **New Project** — set a DB
+   password (save it, you need it for the connection string) and pick a
+   region close to where you'll host the app.
+2. Wait ~2 min for provisioning, then go to **Project Settings → Database →
+   Connection string**.
+3. Select the **Transaction** pooler tab (port `6543`), copy the URI, and
+   swap in your real DB password for the `[YOUR-PASSWORD]` placeholder.
+   Use this one — Vercel's serverless functions are IPv4-only and can't
+   reach Supabase's direct connection (port `5432`, IPv6-only unless you
+   pay for the IPv4 add-on). The pooler also handles the fact that every
+   request may come from a fresh function instance instead of one
+   long-lived process.
+4. Paste that URI into `DATABASE_URL` (locally in `.env`, in production as
+   a Vercel env var — see below). `settings.py` already sets
+   `sslmode=require` and disables psycopg3 server-side prepared statements
+   for any Postgres `DATABASE_URL`, since Supabase's pooler runs pgbouncer
+   in transaction mode and prepared statements don't survive across pooled
+   connections.
+5. Run migrations against it once, from your machine:
+   ```bash
+   DATABASE_URL="<your supabase pooler URI>" python manage.py migrate
+   ```
+
+## Deploying to Vercel
+
+Vercel auto-detects Django (via `manage.py` + `WSGI_APPLICATION`), runs
+`collectstatic` for you at build time, and needs no `Procfile` or build
+script. `vercel.json` in this repo only bumps the function's `maxDuration`
+to 30s, since trip planning calls out to OpenRouteService.
+
+1. Push this repo to GitHub.
+2. In the Vercel dashboard: **Add New → Project**, import the repo, set
    **Root Directory** to `backend`.
-3. Build command: `pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate`
-4. Start command: `gunicorn config.wsgi:application`
-5. Add a **New → PostgreSQL** instance (free tier); Render auto-injects
-   `DATABASE_URL` into the web service if they're linked in the same
-   dashboard — otherwise copy its connection string into the web service's
-   env vars manually.
-6. Set environment variables in the Render dashboard: `SECRET_KEY` (generate
-   a new one, don't reuse the local dev one), `DEBUG=False`, `ALLOWED_HOSTS`
-   (your `*.onrender.com` domain), `ORS_API_KEY`, `CORS_ALLOWED_ORIGINS`
-   (set once the frontend is deployed — see below).
-7. Deploy. Note the resulting URL (e.g. `https://eld-trip-planner-api.onrender.com`).
-
-**Free tier note**: the web service spins down after ~15 minutes idle and
-cold-starts (~30–50s) on the next request — mention this in the Loom so a
-slow first load during grading doesn't look broken.
+3. Add environment variables (Project Settings → Environment Variables):
+   `SECRET_KEY` (generate a new one, don't reuse the local dev one),
+   `DEBUG=False`, `ALLOWED_HOSTS` (your `*.vercel.app` domain),
+   `CSRF_TRUSTED_ORIGINS=https://<your-backend>.vercel.app`,
+   `DATABASE_URL` (the Supabase pooler URI from above), `ORS_API_KEY`,
+   `CORS_ALLOWED_ORIGINS` (set once the frontend is deployed — see below).
+4. Deploy. Note the resulting URL (e.g. `https://eld-trip-planner-api.vercel.app`).
+5. Vercel doesn't run `migrate` for you — it's already been run once
+   against Supabase in step 5 above. Re-run it the same way after any
+   migration-changing deploy.
 
 ## Connecting the Two Apps
 
 Once both are deployed:
-1. Copy the frontend's deployed Vercel URL (e.g. `https://eld-trip-planner.vercel.app`)
-   into this backend's `CORS_ALLOWED_ORIGINS` env var on Render, redeploy.
-2. Copy this backend's deployed Render URL + `/api/` into the frontend's
+1. Copy the frontend's deployed URL (e.g. `https://eld-trip-planner.vercel.app`)
+   into this backend's `CORS_ALLOWED_ORIGINS` env var on Vercel, redeploy.
+2. Copy this backend's deployed URL + `/api/` into the frontend's
    `VITE_API_BASE_URL` env var on Vercel, redeploy (Vite bakes env vars in
    at build time — a redeploy is required after changing it).
 
