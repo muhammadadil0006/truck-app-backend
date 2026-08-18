@@ -129,8 +129,8 @@ Full request/response shapes in [`../PLANNING.md`](../PLANNING.md) § API Contra
 Vercel auto-detects Django (via `manage.py` + `WSGI_APPLICATION`) and runs
 `collectstatic` for you at build time. `vercel.json` only bumps the
 function's `maxDuration`, since trip planning calls out to OpenRouteService.
-Vercel does **not** run `migrate` on its own — `pyproject.toml`'s
-`[tool.vercel.scripts] build` hook does that on every deploy. This means
+Vercel does **not** run `migrate` on its own — `vercel.json`'s
+`buildCommand` does that on every deploy. This means
 `DATABASE_URL` must be reachable at *build* time, not just at request time —
 if Supabase is paused or unreachable, the deploy itself fails, not just
 requests.
