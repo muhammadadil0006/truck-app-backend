@@ -128,18 +128,27 @@ Full request/response shapes in [`../PLANNING.md`](../PLANNING.md) § API Contra
 
 Vercel auto-detects Django (via `manage.py` + `WSGI_APPLICATION`), runs
 `collectstatic` for you at build time, and needs no `Procfile` or build
-script. `vercel.json` in this repo only bumps the function's `maxDuration`
-to 30s, since trip planning calls out to OpenRouteService.
+script. `vercel.json` in this repo only bumps the function's `maxDuration`,
+since trip planning calls out to OpenRouteService.
 
 1. Push this repo to GitHub.
-2. In the Vercel dashboard: **Add New → Project**, import the repo, set
-   **Root Directory** to `backend`.
-3. Add environment variables (Project Settings → Environment Variables):
-   `SECRET_KEY` (generate a new one, don't reuse the local dev one),
-   `DEBUG=False`, `ALLOWED_HOSTS` (your `*.vercel.app` domain),
-   `CSRF_TRUSTED_ORIGINS=https://<your-backend>.vercel.app`,
-   `DATABASE_URL` (the Supabase pooler URI from above), `ORS_API_KEY`,
-   `CORS_ALLOWED_ORIGINS` (set once the frontend is deployed — see below).
+2. In the Vercel dashboard: **Add New → Project**, import the repo. This
+   repo's root *is* the Django project, so leave **Root Directory** at its
+   default (`.`) — no override needed.
+3. Add environment variables (Project Settings → Environment Variables,
+   **before** the first deploy):
+
+   | Key | Value |
+   |---|---|
+   | `SECRET_KEY` | freshly generated — see command above, don't reuse the local dev one |
+   | `DEBUG` | `False` |
+   | `ALLOWED_HOSTS` | `.vercel.app` (leading dot = wildcard; covers prod + preview URLs before you know the exact hostname) |
+   | `CSRF_TRUSTED_ORIGINS` | `https://*.vercel.app` |
+   | `DATABASE_URL` | the Supabase Transaction-pooler URI from above |
+   | `CORS_ALLOWED_ORIGINS` | your deployed frontend's URL, e.g. `https://your-frontend.vercel.app` |
+   | `ORS_API_KEY` | your ORS key |
+   | `ORS_BASE_URL` | `https://api.openrouteservice.org` |
+
 4. Deploy. Note the resulting URL (e.g. `https://eld-trip-planner-api.vercel.app`).
 5. Vercel doesn't run `migrate` for you — it's already been run once
    against Supabase in step 5 above. Re-run it the same way after any
