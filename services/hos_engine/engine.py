@@ -347,6 +347,19 @@ def plan_trip(
         start_lng=current_lng,
     )
 
+    # Log the driver as OFF_DUTY from midnight up to shift_start — without
+    # this, day 1's segments start mid-day and never sum to 24hrs, violating
+    # CLAUDE.md's "total hours per row must sum to 24" requirement. Mirrors
+    # the symmetric "close out the final calendar day" block further down.
+    start_of_day = datetime.combine(sim.clock.wall_clock.date(), datetime.min.time())
+    if start_of_day < sim.clock.wall_clock:
+        seconds_per_minute = 60
+        leading_off_duty_minutes = (sim.clock.wall_clock - start_of_day).total_seconds() / seconds_per_minute
+        sim.clock.wall_clock = start_of_day
+        sim._add_segment(
+            DutyStatus.OFF_DUTY, leading_off_duty_minutes, current_location_text, current_lat, current_lng
+        )
+
     sim.drive_leg(leg_current_to_pickup)
 
     sim._add_stop(StopType.PICKUP, pickup_location_text, pickup_lat, pickup_lng, PICKUP_DURATION_MINUTES)

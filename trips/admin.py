@@ -6,7 +6,7 @@ from trips.models import DailyLog, Trip
 class DailyLogInline(admin.TabularInline):
     model = DailyLog
     extra = 0
-    fields = ["day_index", "log_date", "total_driving_hours", "total_on_duty_hours"]
+    fields = ["day_index", "log_date", "total_driving_hours", "total_on_duty_hours", "segments", "transitions"]
     readonly_fields = fields
 
 
