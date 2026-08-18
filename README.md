@@ -119,17 +119,21 @@ Full request/response shapes in [`../PLANNING.md`](../PLANNING.md) § API Contra
    for any Postgres `DATABASE_URL`, since Supabase's pooler runs pgbouncer
    in transaction mode and prepared statements don't survive across pooled
    connections.
-5. Run migrations against it once, from your machine:
-   ```bash
-   DATABASE_URL="<your supabase pooler URI>" python manage.py migrate
-   ```
+5. Migrations run automatically on every Vercel deploy (see below) — no
+   manual step needed once `DATABASE_URL` is set there. For local dev
+   against this same Supabase DB instead of sqlite, run
+   `python manage.py migrate` with `DATABASE_URL` set in your shell/`.env`.
 
 ## Deploying to Vercel
 
-Vercel auto-detects Django (via `manage.py` + `WSGI_APPLICATION`), runs
-`collectstatic` for you at build time, and needs no `Procfile` or build
-script. `vercel.json` in this repo only bumps the function's `maxDuration`,
-since trip planning calls out to OpenRouteService.
+Vercel auto-detects Django (via `manage.py` + `WSGI_APPLICATION`) and runs
+`collectstatic` for you at build time. `vercel.json` only bumps the
+function's `maxDuration`, since trip planning calls out to OpenRouteService.
+Vercel does **not** run `migrate` on its own — `pyproject.toml`'s
+`[tool.vercel.scripts] build` hook does that on every deploy. This means
+`DATABASE_URL` must be reachable at *build* time, not just at request time —
+if Supabase is paused or unreachable, the deploy itself fails, not just
+requests.
 
 1. Push this repo to GitHub.
 2. In the Vercel dashboard: **Add New → Project**, import the repo. This
@@ -149,10 +153,9 @@ since trip planning calls out to OpenRouteService.
    | `ORS_API_KEY` | your ORS key |
    | `ORS_BASE_URL` | `https://api.openrouteservice.org` |
 
-4. Deploy. Note the resulting URL (e.g. `https://eld-trip-planner-api.vercel.app`).
-5. Vercel doesn't run `migrate` for you — it's already been run once
-   against Supabase in step 5 above. Re-run it the same way after any
-   migration-changing deploy.
+4. Deploy — the build log should show `Applying trips.0001_initial... OK`
+   etc. from the `migrate` hook. Note the resulting URL (e.g.
+   `https://eld-trip-planner-api.vercel.app`).
 
 ## Connecting the Two Apps
 
