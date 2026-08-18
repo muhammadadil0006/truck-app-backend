@@ -90,6 +90,13 @@ CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"]
     + (["rest_framework.renderers.BrowsableAPIRenderer"] if DEBUG else []),
+    # DRF's DecimalField serializes as a JSON string ("10.00") by default.
+    # The frontend's Trip/DailyLog types declare these fields as `number`
+    # and does real arithmetic on them (e.g. driving_hours + on_duty_hours
+    # for "on-duty hours today") — string values there silently concatenate
+    # instead of adding. Coerce to real JSON numbers app-wide instead of
+    # patching every consumer.
+    "COERCE_DECIMAL_TO_STRING": False,
 }
 
 # Repeated identical geocode/directions lookups are cached here (see

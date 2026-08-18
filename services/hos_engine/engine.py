@@ -51,6 +51,24 @@ def _default_reverse_geocode(lat: float, lng: float) -> str:
     return f"{lat:.4f}, {lng:.4f}"
 
 
+QUARTER_HOUR_MINUTES = 15
+
+
+def _round_to_nearest_quarter_hour(dt: datetime) -> datetime:
+    """Real drivers fill paper/ELD logs to the nearest 15 minutes, not the
+    second — every segment boundary shown on the grid must land on :00,
+    :15, :30, or :45. Applied only to the DISPLAYED timestamps (see
+    _add_segment): the internal wall_clock stays minute-precise so HOS
+    limit math never drifts across a long multi-day trip."""
+    discard = timedelta(
+        minutes=dt.minute % QUARTER_HOUR_MINUTES, seconds=dt.second, microseconds=dt.microsecond
+    )
+    rounded = dt - discard
+    if discard >= timedelta(minutes=QUARTER_HOUR_MINUTES / 2):
+        rounded += timedelta(minutes=QUARTER_HOUR_MINUTES)
+    return rounded
+
+
 @dataclass
 class _Clock:
     """Mutable simulation state, threaded through the drive/rest helpers.
@@ -73,6 +91,9 @@ class _Simulator:
         cycle_used_hours: float,
         route_geometry: list[list[float]],
         reverse_geocode: ReverseGeocodeFn,
+        start_location_text: str = "",
+        start_lat: float = 0.0,
+        start_lng: float = 0.0,
     ):
         self.clock = _Clock(
             wall_clock=shift_start,
@@ -90,6 +111,17 @@ class _Simulator:
         self.reverse_geocode = reverse_geocode
         self.segments: list[Segment] = []
         self.stops: list[Stop] = []
+
+        # Remarks convention (see CLAUDE.md / the John Doe example): a
+        # location is logged at the START of each duty-status segment (the
+        # point where the PREVIOUS status ended). A driving segment's start
+        # location is therefore always already known from whatever preceded
+        # it — never re-derived by interpolating the segment's own end
+        # point, which would mislabel it if a later midnight-split cut the
+        # segment short before it actually reached that point.
+        self.last_stop_label = start_location_text
+        self.last_stop_lat = start_lat
+        self.last_stop_lng = start_lng
 
     # --- position helpers ---
 
@@ -116,32 +148,53 @@ class _Simulator:
         remarks: str = "",
         miles: float = 0.0,
     ) -> None:
+        # start/end below are the precise instants used for state
+        # advancement; display_start/display_end (rounded to the nearest
+        # quarter hour) are what actually gets stored on the Segment. Two
+        # consecutive segments share the same precise boundary instant, so
+        # rounding it once here keeps them continuous after rounding too —
+        # no gap or overlap is introduced on the grid.
         start = self.clock.wall_clock
         end = start + timedelta(minutes=minutes)
-        self.segments.append(
-            Segment(
-                status=status,
-                start_time=start.isoformat(),
-                end_time=end.isoformat(),
-                location_text=location_text,
-                lat=lat,
-                lng=lng,
-                remarks=remarks,
-                miles=miles,
-            )
-        )
+        display_start = _round_to_nearest_quarter_hour(start)
+        display_end = _round_to_nearest_quarter_hour(end)
         self.clock.wall_clock = end
 
-        # Any non-driving stop of at least the break duration satisfies the
-        # 30-minute break requirement, regardless of duty status — a fuel
-        # stop, the pickup/dropoff stop, or a full 10-hr/34-hr reset all
-        # qualify just as much as a dedicated break does.
-        if status != DutyStatus.DRIVING and minutes >= BREAK_DURATION_MINUTES:
-            self.clock.driving_minutes_since_break = 0
+        if display_start != display_end:
+            self.segments.append(
+                Segment(
+                    status=status,
+                    start_time=display_start.isoformat(),
+                    end_time=display_end.isoformat(),
+                    location_text=location_text,
+                    lat=lat,
+                    lng=lng,
+                    remarks=remarks,
+                    miles=miles,
+                )
+            )
+        # else: this slice rounds away to nothing on the displayed grid
+        # (can happen for a sub-quarter-hour sliver right before a limit
+        # triggers) — its effect on HOS counters/mileage already applied
+        # via the precise `end` above regardless of whether it's drawn.
+
+        if status != DutyStatus.DRIVING:
+            # Any non-driving stop of at least the break duration satisfies
+            # the 30-minute break requirement, regardless of duty status —
+            # a fuel stop, the pickup/dropoff stop, or a full 10-hr/34-hr
+            # reset all qualify just as much as a dedicated break does.
+            if minutes >= BREAK_DURATION_MINUTES:
+                self.clock.driving_minutes_since_break = 0
+
+            # This is now the last known position — the next driving
+            # segment (if any) starts here.
+            self.last_stop_label = location_text
+            self.last_stop_lat = lat
+            self.last_stop_lng = lng
 
     def _add_stop(self, stop_type: StopType, location_text: str, lat: float, lng: float, duration_minutes: float) -> None:
-        arrival = self.clock.wall_clock
-        departure = arrival + timedelta(minutes=duration_minutes)
+        arrival = _round_to_nearest_quarter_hour(self.clock.wall_clock)
+        departure = _round_to_nearest_quarter_hour(self.clock.wall_clock + timedelta(minutes=duration_minutes))
         self.stops.append(
             Stop(
                 type=stop_type,
@@ -191,7 +244,7 @@ class _Simulator:
 
     # --- driving a leg ---
 
-    def drive_leg(self, leg: RouteLeg, dest_location_text: str, dest_lat: float, dest_lng: float) -> None:
+    def drive_leg(self, leg: RouteLeg) -> None:
         remaining_minutes = round(leg.duration_hours * MINUTES_PER_HOUR)
         if remaining_minutes <= 0 or leg.distance_miles <= 0:
             return
@@ -237,16 +290,17 @@ class _Simulator:
             chunk_minutes = max(chunk_minutes, 1)  # guard against a zero-length chunk from rounding
             chunk_miles = chunk_minutes / MINUTES_PER_HOUR * mph
 
-            is_final_chunk = chunk_minutes >= remaining_minutes
-            if is_final_chunk:
-                label, lat, lng = dest_location_text, dest_lat, dest_lng
-            else:
-                lat, lng = interpolate_point_at_distance(
-                    self.route_geometry, self.cumulative_distances, c.total_miles_driven + chunk_miles
-                )
-                label = self.reverse_geocode(lat, lng)
-
-            self._add_segment(DutyStatus.DRIVING, chunk_minutes, label, lat, lng, miles=chunk_miles)
+            # This segment starts where the last stop left off — see the
+            # last_stop_* comment in __init__/_add_segment for why we don't
+            # interpolate this chunk's own end point instead.
+            self._add_segment(
+                DutyStatus.DRIVING,
+                chunk_minutes,
+                self.last_stop_label,
+                self.last_stop_lat,
+                self.last_stop_lng,
+                miles=chunk_miles,
+            )
 
             c.cycle_used_minutes += chunk_minutes
             c.duty_window_minutes += chunk_minutes
@@ -288,9 +342,12 @@ def plan_trip(
         cycle_used_hours=cycle_used_hours,
         route_geometry=route_geometry,
         reverse_geocode=reverse_geocode or _default_reverse_geocode,
+        start_location_text=current_location_text,
+        start_lat=current_lat,
+        start_lng=current_lng,
     )
 
-    sim.drive_leg(leg_current_to_pickup, pickup_location_text, pickup_lat, pickup_lng)
+    sim.drive_leg(leg_current_to_pickup)
 
     sim._add_stop(StopType.PICKUP, pickup_location_text, pickup_lat, pickup_lng, PICKUP_DURATION_MINUTES)
     sim._add_segment(
@@ -299,7 +356,7 @@ def plan_trip(
     sim.clock.cycle_used_minutes += PICKUP_DURATION_MINUTES
     sim.clock.duty_window_minutes += PICKUP_DURATION_MINUTES
 
-    sim.drive_leg(leg_pickup_to_dropoff, dropoff_location_text, dropoff_lat, dropoff_lng)
+    sim.drive_leg(leg_pickup_to_dropoff)
 
     sim._add_stop(StopType.DROPOFF, dropoff_location_text, dropoff_lat, dropoff_lng, DROPOFF_DURATION_MINUTES)
     sim._add_segment(

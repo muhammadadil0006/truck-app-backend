@@ -252,7 +252,7 @@ class HosEngineBoundaryTests(SimpleTestCase):
             reverse_geocode=fake_reverse_geocode,
         )
         sim.clock.duty_window_minutes = MAX_DUTY_WINDOW_MINUTES  # window already exhausted
-        sim.drive_leg(RouteLeg(distance_miles=10, duration_hours=0.2), "Dest", 32.7555, -97.3308)
+        sim.drive_leg(RouteLeg(distance_miles=10, duration_hours=0.2))
 
         self.assertGreater(len(sim.segments), 0)
         first_segment = sim.segments[0]
@@ -266,7 +266,7 @@ class HosEngineBoundaryTests(SimpleTestCase):
             route_geometry=[[-96.797, 32.7767], [-97.3308, 32.7555]],
             reverse_geocode=fake_reverse_geocode,
         )
-        sim.drive_leg(RouteLeg(distance_miles=10, duration_hours=0.2), "Dest", 32.7555, -97.3308)
+        sim.drive_leg(RouteLeg(distance_miles=10, duration_hours=0.2))
 
         first_segment = sim.segments[0]
         self.assertEqual(first_segment.status, DutyStatus.OFF_DUTY)
@@ -300,7 +300,7 @@ class HosEngineBoundaryTests(SimpleTestCase):
             reverse_geocode=fake_reverse_geocode,
         )
         sim.clock.miles_since_fuel = FUEL_STOP_INTERVAL_MILES - miles_until_both_trigger
-        sim.drive_leg(RouteLeg(distance_miles=mph, duration_hours=1.0), "Dest", 32.7555, -97.3308)
+        sim.drive_leg(RouteLeg(distance_miles=mph, duration_hours=1.0))
 
         non_driving = [s for s in sim.segments if s.status != DutyStatus.DRIVING]
         self.assertEqual(non_driving[0].remarks, "34-hour restart")
