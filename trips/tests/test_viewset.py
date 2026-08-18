@@ -36,6 +36,11 @@ FAKE_ROUTE = {
     ],
 }
 
+# Django's test client turns HTTP_* kwargs into request headers — this is
+# how X-Guest-Id (see trips/views.py) reaches the view under test.
+GUEST_A = {"HTTP_X_GUEST_ID": "guest-a"}
+GUEST_B = {"HTTP_X_GUEST_ID": "guest-b"}
+
 
 def _mock_routing_client():
     """Patches both methods the view calls on OpenRouteServiceClient."""
@@ -48,12 +53,16 @@ def _mock_routing_client():
 
 class TripViewSetCreateTests(APITestCase):
     def test_create_with_missing_fields_returns_400(self):
-        response = self.client.post("/api/trips/", data={})
+        response = self.client.post("/api/trips/", data={}, **GUEST_A)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_without_guest_id_header_returns_400(self):
+        response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_rejects_negative_cycle_used_hrs(self):
         response = self.client.post(
-            "/api/trips/", data={**VALID_TRIP_PAYLOAD, "cycle_used_hrs": -1}
+            "/api/trips/", data={**VALID_TRIP_PAYLOAD, "cycle_used_hrs": -1}, **GUEST_A
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -62,13 +71,13 @@ class TripViewSetCreateTests(APITestCase):
         ALGORITHM-GUIDE.md Example E."""
         with _mock_routing_client():
             response = self.client.post(
-                "/api/trips/", data={**VALID_TRIP_PAYLOAD, "cycle_used_hrs": 68}
+                "/api/trips/", data={**VALID_TRIP_PAYLOAD, "cycle_used_hrs": 68}, **GUEST_A
             )
         self.assertNotEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_returns_201_with_daily_logs(self):
         with _mock_routing_client():
-            response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD)
+            response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD, **GUEST_A)
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn("id", response.data)
@@ -79,16 +88,32 @@ class TripViewSetCreateTests(APITestCase):
         from services.routing.exceptions import RoutingError
 
         with patch("trips.views.OpenRouteServiceClient.get_route", side_effect=RoutingError("boom")):
-            response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD)
+            response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD, **GUEST_A)
 
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
 
 
 class TripViewSetListRetrieveTests(APITestCase):
     def test_list_empty_history_returns_200_empty_list(self):
-        response = self.client.get("/api/trips/")
+        response = self.client.get("/api/trips/", **GUEST_A)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data, [])
+
+    def test_list_without_guest_id_header_returns_400(self):
+        response = self.client.get("/api/trips/")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_only_returns_the_calling_guests_trips(self):
+        """History must be per-client, not global — see the guest_id design
+        note on the Trip model."""
+        with _mock_routing_client():
+            self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD, **GUEST_A)
+
+        own_history = self.client.get("/api/trips/", **GUEST_A)
+        other_history = self.client.get("/api/trips/", **GUEST_B)
+
+        self.assertEqual(len(own_history.data), 1)
+        self.assertEqual(other_history.data, [])
 
     def test_retrieve_unknown_id_returns_404(self):
         response = self.client.get("/api/trips/00000000-0000-0000-0000-000000000000/")
@@ -96,9 +121,45 @@ class TripViewSetListRetrieveTests(APITestCase):
 
     def test_created_trip_is_retrievable(self):
         with _mock_routing_client():
-            create_response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD)
+            create_response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD, **GUEST_A)
         trip_id = create_response.data["id"]
 
         response = self.client.get(f"/api/trips/{trip_id}/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["pickup_location_text"], "Dallas, TX")
+
+    def test_retrieve_ignores_guest_id_shareable_link_works_for_anyone(self):
+        """A Trip's UUID is meant to work as a shareable link — retrieve must
+        NOT be scoped to the owning guest, unlike list/destroy."""
+        with _mock_routing_client():
+            create_response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD, **GUEST_A)
+        trip_id = create_response.data["id"]
+
+        response = self.client.get(f"/api/trips/{trip_id}/", **GUEST_B)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+class TripViewSetDestroyTests(APITestCase):
+    def test_destroy_by_owning_guest_succeeds(self):
+        with _mock_routing_client():
+            create_response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD, **GUEST_A)
+        trip_id = create_response.data["id"]
+
+        response = self.client.delete(f"/api/trips/{trip_id}/", **GUEST_A)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_destroy_by_other_guest_returns_404(self):
+        with _mock_routing_client():
+            create_response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD, **GUEST_A)
+        trip_id = create_response.data["id"]
+
+        response = self.client.delete(f"/api/trips/{trip_id}/", **GUEST_B)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_destroy_without_guest_id_header_returns_400(self):
+        with _mock_routing_client():
+            create_response = self.client.post("/api/trips/", data=VALID_TRIP_PAYLOAD, **GUEST_A)
+        trip_id = create_response.data["id"]
+
+        response = self.client.delete(f"/api/trips/{trip_id}/")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

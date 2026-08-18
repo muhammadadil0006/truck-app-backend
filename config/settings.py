@@ -8,6 +8,7 @@ See backend/README.md for the full list of environment variables.
 from pathlib import Path
 
 import environ
+from corsheaders.defaults import default_headers
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -102,6 +103,10 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # --- Project-specific settings ---
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
+
+# X-Guest-Id (see trips/views.py) is a custom header, so it needs adding to
+# django-cors-headers' default allow-list or cross-origin preflight blocks it.
+CORS_ALLOW_HEADERS = [*default_headers, "x-guest-id"]
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"]

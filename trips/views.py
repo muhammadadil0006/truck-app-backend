@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from rest_framework import mixins, status, viewsets
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -16,6 +17,17 @@ from trips.serializers import (
     TripListItemSerializer,
     TripSerializer,
 )
+
+# Client-generated id (localStorage, no server sessions) identifying which
+# browser is calling — see frontend's utils/guestId.ts + tripApi.ts.
+GUEST_ID_HEADER = "X-Guest-Id"
+
+
+def _require_guest_id(request) -> str:
+    guest_id = request.headers.get(GUEST_ID_HEADER, "").strip()
+    if not guest_id:
+        raise ValidationError({"detail": f"{GUEST_ID_HEADER} header is required."})
+    return guest_id
 
 
 class GeocodeAutocompleteView(APIView):
@@ -50,9 +62,11 @@ class TripViewSet(
 ):
     """
     POST   /api/trips/       -> plan a trip (route, run HOS engine, persist)
-    GET    /api/trips/       -> trip history (lightweight list)
-    GET    /api/trips/<id>/  -> retrieve one trip in full (shareable link)
-    DELETE /api/trips/<id>/  -> remove from history
+    GET    /api/trips/       -> trip history (lightweight list) — scoped to
+                                 the caller's X-Guest-Id, not global
+    GET    /api/trips/<id>/  -> retrieve one trip in full (shareable link —
+                                 deliberately NOT guest-scoped)
+    DELETE /api/trips/<id>/  -> remove from history — scoped to owner
 
     No update/partial_update: a computed trip is treated as immutable.
     """
@@ -67,7 +81,16 @@ class TripViewSet(
             return TripListItemSerializer
         return TripSerializer
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # Retrieve deliberately excluded: a Trip's UUID is meant to work as
+        # a shareable link regardless of who's viewing it.
+        if self.action in ("list", "destroy"):
+            return queryset.filter(guest_id=_require_guest_id(self.request))
+        return queryset
+
     def create(self, request, *args, **kwargs):
+        guest_id = _require_guest_id(request)
         input_serializer = TripInputSerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
         data = input_serializer.validated_data
@@ -106,5 +129,5 @@ class TripViewSet(
         except RoutingError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
-        trip = save_trip(data, simulation)
+        trip = save_trip(data, simulation, guest_id)
         return Response(TripSerializer(trip).data, status=status.HTTP_201_CREATED)

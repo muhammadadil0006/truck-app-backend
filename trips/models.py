@@ -18,6 +18,13 @@ class Trip(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
+    # Client-generated id (localStorage, no server sessions/auth) identifying
+    # which browser planned this trip — see trips/views.py's X-Guest-Id
+    # handling. Scopes trip HISTORY (list) and deletion to the owning
+    # client; retrieve-by-id stays open regardless, since a Trip's UUID is
+    # meant to work as a shareable link (see the class docstring above).
+    guest_id = models.CharField(max_length=64, db_index=True, blank=True, default="")
+
     current_location_text = models.CharField(max_length=255)
     current_location_lat = models.FloatField()
     current_location_lng = models.FloatField()

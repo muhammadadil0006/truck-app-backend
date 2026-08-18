@@ -15,8 +15,9 @@ from services.hos_engine.dataclasses import SimulationResult
 from trips.models import DailyLog, Trip
 
 
-def save_trip(validated_input: dict, simulation: SimulationResult) -> Trip:
+def save_trip(validated_input: dict, simulation: SimulationResult, guest_id: str) -> Trip:
     trip = Trip.objects.create(
+        guest_id=guest_id,
         current_location_text=validated_input["current_location_text"],
         current_location_lat=validated_input["current_location_lat"],
         current_location_lng=validated_input["current_location_lng"],
