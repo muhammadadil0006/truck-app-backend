@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from services.constants import CYCLE_LIMIT_HOURS, MINUTES_PER_HOUR, DutyStatus, RESTART_OFF_DUTY_HOURS
+from services.constants import (CYCLE_LIMIT_HOURS, MINUTES_PER_HOUR,
+                                RESTART_OFF_DUTY_HOURS, DutyStatus)
 from services.hos_engine.dataclasses import DailySummary, Segment, Transition
 
 SECONDS_PER_MINUTE = 60

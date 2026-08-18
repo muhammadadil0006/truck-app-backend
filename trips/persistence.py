@@ -1,12 +1,3 @@
-"""
-Translates a services.hos_engine.dataclasses.SimulationResult (plain Python,
-no Django) into persisted Trip + DailyLog rows.
-
-Kept as the one piece of ORM-touching glue, separate from both the pure
-engine (services/) and the thin TripViewSet.create() — see PLANNING.md's
-backend architecture section for why.
-"""
-
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -16,6 +7,25 @@ from trips.models import DailyLog, Trip
 
 
 def save_trip(validated_input: dict, simulation: SimulationResult, guest_id: str) -> Trip:
+    """Persist a planned trip: a Trip row plus one DailyLog row per day the
+    engine produced.
+
+    Args:
+        validated_input: TripInputSerializer's validated_data — the 4 raw
+            user inputs (current/pickup/dropoff location text+lat+lng,
+            cycle_used_hrs).
+        simulation: the engine's full output for this trip — distance/
+            duration totals, route geometry, map-marker stops, and one
+            DailySummary per calendar day.
+        guest_id: the owning client's id (see trips/views.py's X-Guest-Id
+            handling), stamped onto the Trip so history/delete can be
+            scoped to it later.
+
+    Returns:
+        The created Trip, with its daily_logs already persisted (though not
+        prefetched onto the returned instance — re-fetch via the queryset
+        if you need them attached).
+    """
     trip = Trip.objects.create(
         guest_id=guest_id,
         current_location_text=validated_input["current_location_text"],

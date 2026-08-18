@@ -13,15 +13,11 @@ from datetime import datetime
 
 from django.test import SimpleTestCase
 
-from services.constants import (
-    CYCLE_LIMIT_HOURS,
-    CYCLE_LIMIT_MINUTES,
-    DutyStatus,
-    FUEL_STOP_INTERVAL_MILES,
-    MANDATORY_OFF_DUTY_HOURS,
-    MAX_DRIVING_HOURS_PER_DAY,
-    MAX_DUTY_WINDOW_MINUTES,
-)
+from services.constants import (CYCLE_LIMIT_HOURS, CYCLE_LIMIT_MINUTES,
+                                FUEL_STOP_INTERVAL_MILES,
+                                MANDATORY_OFF_DUTY_HOURS,
+                                MAX_DRIVING_HOURS_PER_DAY,
+                                MAX_DUTY_WINDOW_MINUTES, DutyStatus)
 from services.hos_engine.dataclasses import RouteLeg
 from services.hos_engine.engine import _Simulator, plan_trip
 

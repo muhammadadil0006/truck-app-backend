@@ -22,25 +22,21 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable
 
-from services.constants import (
-    BREAK_DURATION_MINUTES,
-    BREAK_REQUIRED_AFTER_DRIVING_MINUTES,
-    CYCLE_LIMIT_MINUTES,
-    DROPOFF_DURATION_MINUTES,
-    DutyStatus,
-    FUEL_STOP_DURATION_MINUTES,
-    FUEL_STOP_INTERVAL_MILES,
-    MANDATORY_OFF_DUTY_MINUTES,
-    MAX_DRIVING_MINUTES_PER_DAY,
-    MAX_DUTY_WINDOW_MINUTES,
-    MINUTES_PER_HOUR,
-    PICKUP_DURATION_MINUTES,
-    RESTART_OFF_DUTY_MINUTES,
-    StopType,
-)
-from services.hos_engine.dataclasses import RouteLeg, Segment, SimulationResult, Stop
+from services.constants import (BREAK_DURATION_MINUTES,
+                                BREAK_REQUIRED_AFTER_DRIVING_MINUTES,
+                                CYCLE_LIMIT_MINUTES, DROPOFF_DURATION_MINUTES,
+                                FUEL_STOP_DURATION_MINUTES,
+                                FUEL_STOP_INTERVAL_MILES,
+                                MANDATORY_OFF_DUTY_MINUTES,
+                                MAX_DRIVING_MINUTES_PER_DAY,
+                                MAX_DUTY_WINDOW_MINUTES, MINUTES_PER_HOUR,
+                                PICKUP_DURATION_MINUTES,
+                                RESTART_OFF_DUTY_MINUTES, DutyStatus, StopType)
+from services.hos_engine.dataclasses import (RouteLeg, Segment,
+                                             SimulationResult, Stop)
 from services.hos_engine.log_splitter import split_into_daily_summaries
-from services.hos_engine.route_geometry import build_cumulative_distances, interpolate_point_at_distance
+from services.hos_engine.route_geometry import (build_cumulative_distances,
+                                                interpolate_point_at_distance)
 
 ReverseGeocodeFn = Callable[[float, float], str]
 

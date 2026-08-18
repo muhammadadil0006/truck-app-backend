@@ -1,7 +1,6 @@
 from datetime import datetime
 
 from rest_framework import mixins, status, viewsets
-from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -17,30 +16,17 @@ from trips.serializers import (
     TripListItemSerializer,
     TripSerializer,
 )
-
-# Client-generated id (localStorage, no server sessions) identifying which
-# browser is calling — see frontend's utils/guestId.ts + tripApi.ts.
-GUEST_ID_HEADER = "X-Guest-Id"
-
-
-def _require_guest_id(request) -> str:
-    guest_id = request.headers.get(GUEST_ID_HEADER, "").strip()
-    if not guest_id:
-        raise ValidationError({"detail": f"{GUEST_ID_HEADER} header is required."})
-    return guest_id
+from trips.validators import require_guest_id
 
 
 class GeocodeAutocompleteView(APIView):
-    """
-    GET /api/geocode/?q=<partial text> -> [{"label", "lat", "lng"}, ...]
-
-    Proxies OpenRouteService's autocomplete endpoint so ORS_API_KEY never
-    reaches the browser, and so location suggestions come from the exact
-    same geocoder the directions call uses — no drift between what the user
-    picks in the UI and what the backend resolves.
-    """
+    """Location-autocomplete proxy. Keeps ORS_API_KEY off the browser, and
+    keeps suggestions from the same geocoder that later resolves the route
+    — so what the user picks is exactly where the trip gets planned from."""
 
     def get(self, request, *args, **kwargs):
+        """Skips calling ORS for short queries (nothing useful to suggest
+        yet), otherwise returns its autocomplete results."""
         query = request.query_params.get("q", "").strip()
         if len(query) < 3:
             return Response([])
@@ -60,16 +46,11 @@ class TripViewSet(
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
-    """
-    POST   /api/trips/       -> plan a trip (route, run HOS engine, persist)
-    GET    /api/trips/       -> trip history (lightweight list) — scoped to
-                                 the caller's X-Guest-Id, not global
-    GET    /api/trips/<id>/  -> retrieve one trip in full (shareable link —
-                                 deliberately NOT guest-scoped)
-    DELETE /api/trips/<id>/  -> remove from history — scoped to owner
-
-    No update/partial_update: a computed trip is treated as immutable.
-    """
+    """The trip resource: plan, browse history, view one by its link, or
+    delete. Ownership is a client-generated guest id, not a login — list
+    and destroy are scoped to it, retrieve isn't, since a trip's link is
+    meant to be shareable with anyone who has it. Immutable once created:
+    no update/partial_update."""
 
     queryset = Trip.objects.prefetch_related("daily_logs")
     lookup_field = "id"
@@ -82,15 +63,16 @@ class TripViewSet(
         return TripSerializer
 
     def get_queryset(self):
+        """Scopes list/destroy to the calling guest; retrieve stays open."""
         queryset = super().get_queryset()
-        # Retrieve deliberately excluded: a Trip's UUID is meant to work as
-        # a shareable link regardless of who's viewing it.
         if self.action in ("list", "destroy"):
-            return queryset.filter(guest_id=_require_guest_id(self.request))
+            return queryset.filter(guest_id=require_guest_id(self.request))
         return queryset
 
     def create(self, request, *args, **kwargs):
-        guest_id = _require_guest_id(request)
+        """Resolves the route, runs the HOS engine over it, and persists
+        the result for the calling guest."""
+        guest_id = require_guest_id(request)
         input_serializer = TripInputSerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
         data = input_serializer.validated_data
@@ -105,10 +87,6 @@ class TripViewSet(
                     (data["dropoff_location_lat"], data["dropoff_location_lng"]),
                 ]
             )
-        except RoutingError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-
-        try:
             simulation = plan_trip(
                 current_lat=data["current_location_lat"],
                 current_lng=data["current_location_lng"],
