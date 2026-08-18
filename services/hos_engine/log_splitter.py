@@ -26,7 +26,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from services.constants import CYCLE_LIMIT_HOURS, MINUTES_PER_HOUR, DutyStatus, RESTART_OFF_DUTY_HOURS
-from services.hos_engine.dataclasses import DailySummary, Segment
+from services.hos_engine.dataclasses import DailySummary, Segment, Transition
 
 SECONDS_PER_MINUTE = 60
 
@@ -84,6 +84,30 @@ def _split_at_midnight(segment: Segment) -> list[Segment]:
     return [p for p in pieces if p.start_time != p.end_time]
 
 
+def _build_transitions(segments: list[Segment]) -> list[Transition]:
+    """One entry per duty-status change, computed on the RAW (pre-midnight-
+    split) segment list — a segment that merely crosses midnight without
+    its status changing (e.g. an overnight 10-hr reset) must not register
+    as a transition."""
+    transitions: list[Transition] = []
+    prev_status: DutyStatus | None = None
+    for seg in segments:
+        if seg.status != prev_status:
+            transitions.append(
+                Transition(
+                    time=seg.start_time,
+                    from_status=prev_status,
+                    to_status=seg.status,
+                    location_text=seg.location_text,
+                    lat=seg.lat,
+                    lng=seg.lng,
+                    remarks=seg.remarks,
+                )
+            )
+            prev_status = seg.status
+    return transitions
+
+
 def split_into_daily_summaries(
     segments: list[Segment],
     cycle_used_hours_at_start: float,
@@ -96,6 +120,10 @@ def split_into_daily_summaries(
     for piece in all_pieces:
         day_key = piece.start_time[:10]  # "YYYY-MM-DD"
         days.setdefault(day_key, []).append(piece)
+
+    transitions_by_day: dict[str, list[Transition]] = {}
+    for transition in _build_transitions(segments):
+        transitions_by_day.setdefault(transition.time[:10], []).append(transition)
 
     summaries: list[DailySummary] = []
     rolling_cycle_hours = cycle_used_hours_at_start
@@ -135,6 +163,7 @@ def split_into_daily_summaries(
                 day_index=day_index,
                 log_date=day_key,
                 segments=day_segments,
+                transitions=transitions_by_day.get(day_key, []),
                 total_driving_hours=round(driving_minutes / MINUTES_PER_HOUR, 2),
                 total_on_duty_hours=round(on_duty_minutes / MINUTES_PER_HOUR, 2),
                 total_off_duty_hours=round(off_duty_minutes / MINUTES_PER_HOUR, 2),

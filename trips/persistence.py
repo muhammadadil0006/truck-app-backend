@@ -48,6 +48,7 @@ def save_trip(validated_input: dict, simulation: SimulationResult) -> Trip:
             recap_b_available_tomorrow=day.recap_b_available_tomorrow,
             recap_c_last_8_days_if_restart=day.recap_c_last_8_days_if_restart,
             segments=[asdict(seg) for seg in day.segments],
+            transitions=[asdict(t) for t in day.transitions],
         )
         for day in simulation.daily_summaries
     )

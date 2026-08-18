@@ -81,6 +81,12 @@ class DailyLog(models.Model):
     # [{status, start_time, end_time, location_text, lat, lng, remarks}, ...]
     segments = models.JSONField(default=list)
 
+    # [{time, from_status, to_status, location_text, lat, lng}, ...] — one
+    # entry per duty-status change that day, so the frontend can draw the
+    # vertical connector between grid rows without re-deriving it from
+    # adjacent segments.
+    transitions = models.JSONField(default=list)
+
     class Meta:
         ordering = ["day_index"]
         constraints = [

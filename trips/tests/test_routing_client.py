@@ -13,13 +13,19 @@ from services.routing.client import OpenRouteServiceClient
 from services.routing.exceptions import RoutingError
 
 
-def _fake_response(json_body: dict, status_ok: bool = True) -> Mock:
+def _fake_response(json_body: dict, status_ok: bool = True, status_code: int = 200) -> Mock:
     response = Mock()
     response.json.return_value = json_body
+    response.text = str(json_body)
+    response.status_code = status_code
     if status_ok:
         response.raise_for_status.return_value = None
     else:
-        response.raise_for_status.side_effect = requests.HTTPError("500 error")
+        # Real requests.Response.raise_for_status() attaches itself to the
+        # exception via `response=...` — replicate that so code reading
+        # exc.response (to pull ORS's own error body) works the same as it
+        # would against a real failed request.
+        response.raise_for_status.side_effect = requests.HTTPError("error", response=response)
     return response
 
 
@@ -130,3 +136,31 @@ class OpenRouteServiceClientTests(SimpleTestCase):
         with patch("requests.post", return_value=_fake_response({"features": []})):
             with self.assertRaises(RoutingError):
                 self.client.get_route([(32.8, -96.8), (32.9, -97.0)])
+
+    def test_get_route_translates_distance_limit_error_to_friendly_message(self):
+        """Regression test for a real bug: a route exceeding ORS's 6000km
+        driving-car cap (e.g. current location far from pickup/dropoff)
+        returned a bare '400 Client Error: Bad Request' with no actionable
+        detail. ORS's own error code 2004 must now translate to a specific,
+        useful message."""
+        ors_body = {
+            "error": {
+                "code": 2004,
+                "message": "Request parameters exceed the server configuration limits. "
+                "The approximated route distance must not be greater than 6000000.0 meters.",
+            }
+        }
+        with patch("requests.post", return_value=_fake_response(ors_body, status_ok=False, status_code=400)):
+            with self.assertRaises(RoutingError) as ctx:
+                self.client.get_route([(32.8, -96.8), (32.9, -97.0)])
+
+        self.assertIn("too long", str(ctx.exception))
+        self.assertNotIn("400 Client Error", str(ctx.exception))
+
+    def test_get_route_translates_unroutable_point_error_to_friendly_message(self):
+        ors_body = {"error": {"code": 2010, "message": "Could not find routable point..."}}
+        with patch("requests.post", return_value=_fake_response(ors_body, status_ok=False, status_code=404)):
+            with self.assertRaises(RoutingError) as ctx:
+                self.client.get_route([(32.8, -96.8), (32.9, -97.0)])
+
+        self.assertIn("Couldn't find a road", str(ctx.exception))

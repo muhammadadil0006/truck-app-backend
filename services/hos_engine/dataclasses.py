@@ -50,6 +50,26 @@ class Stop:
 
 
 @dataclass
+class Transition:
+    """One duty-status change. Segments alone let the frontend infer
+    transitions (end of segment[i] == start of segment[i+1]), but the grid
+    also needs to draw the vertical connector between two DIFFERENT row
+    y-levels at that instant — storing it explicitly means the frontend
+    doesn't have to diff adjacent segments/rows itself, and it survives the
+    day split unambiguously (a segment crossing midnight is NOT a
+    transition; see log_splitter._build_transitions, computed on the raw
+    pre-split segment list)."""
+
+    time: str  # ISO 8601 instant the duty status changed
+    from_status: DutyStatus | None  # None only for the very first transition of the trip
+    to_status: DutyStatus
+    location_text: str
+    lat: float
+    lng: float
+    remarks: str = ""  # copied from the destination segment's remarks (e.g. "Fuel stop")
+
+
+@dataclass
 class DailySummary:
     """One calendar day's worth of segments plus the recap-box numbers that
     go at the bottom of that day's log sheet. See CLAUDE.md's
@@ -59,6 +79,7 @@ class DailySummary:
     day_index: int  # 1-based
     log_date: str  # "YYYY-MM-DD"
     segments: list[Segment] = field(default_factory=list)
+    transitions: list[Transition] = field(default_factory=list)
 
     total_driving_hours: float = 0.0
     total_on_duty_hours: float = 0.0

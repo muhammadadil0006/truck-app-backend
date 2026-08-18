@@ -42,6 +42,39 @@ REQUEST_TIMEOUT_SECONDS = 8
 METERS_PER_MILE = 1609.34
 SECONDS_PER_HOUR = 3600
 
+# ORS's driving-car profile hard-caps the total route distance it will
+# compute — see https://openrouteservice.org error code 2004. Surfaced here
+# so the 400 it returns becomes an actionable message instead of a bare
+# "400 Client Error: Bad Request".
+MAX_ROUTE_DISTANCE_METERS = 6_000_000
+MAX_ROUTE_DISTANCE_MILES = MAX_ROUTE_DISTANCE_METERS / METERS_PER_MILE
+
+# ORS error codes worth a specific, actionable message. Anything else falls
+# back to ORS's own `error.message` (still far more useful than the generic
+# HTTP status text).
+_ORS_ERROR_MESSAGES = {
+    2004: (
+        f"This trip's total route distance is too long for our free routing "
+        f"service (limit ~{MAX_ROUTE_DISTANCE_MILES:,.0f} miles). Try a shorter route."
+    ),
+    2010: "Couldn't find a road near one of the selected locations — try picking a nearby city or address instead.",
+}
+
+
+def _extract_ors_error_message(response: requests.Response) -> str:
+    """Pulls ORS's own {"error": {"code", "message"}} body out of a failed
+    response instead of settling for requests' generic HTTP status text."""
+    try:
+        error = response.json().get("error", {})
+        code = error.get("code")
+        if code in _ORS_ERROR_MESSAGES:
+            return _ORS_ERROR_MESSAGES[code]
+        if error.get("message"):
+            return error["message"]
+    except ValueError:
+        pass
+    return response.text[:300] or f"HTTP {response.status_code}"
+
 
 class OpenRouteServiceClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
@@ -69,6 +102,8 @@ class OpenRouteServiceClient:
             )
             response.raise_for_status()
             body = response.json()
+        except requests.HTTPError as exc:
+            raise RoutingError(f"OpenRouteService autocomplete failed: {_extract_ors_error_message(exc.response)}") from exc
         except (requests.RequestException, ValueError) as exc:
             raise RoutingError(f"OpenRouteService autocomplete failed: {exc}") from exc
 
@@ -138,6 +173,8 @@ class OpenRouteServiceClient:
             segments = feature["properties"]["segments"]
             summary = feature["properties"]["summary"]
             geometry = feature["geometry"]["coordinates"]
+        except requests.HTTPError as exc:
+            raise RoutingError(_extract_ors_error_message(exc.response)) from exc
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
             raise RoutingError(f"OpenRouteService directions failed: {exc}") from exc
 

@@ -58,6 +58,7 @@ class DailyLogSerializer(serializers.ModelSerializer):
             "recap_b_available_tomorrow",
             "recap_c_last_8_days_if_restart",
             "segments",
+            "transitions",
         ]
 
 
